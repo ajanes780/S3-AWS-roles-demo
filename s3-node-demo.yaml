@@ -33,6 +33,7 @@ Resources:
           sources:
             /home/ec2-user/course : "https://iam-roles-demo-s3-ec2-stackfails.s3.amazonaws.com/coursefiles.zip"
 
+#          The following files are used to configure the cfn-init hooks
           files:
             /etc/cfn/cfn-hup.conf:
               content:
