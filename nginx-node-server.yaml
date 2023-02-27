@@ -1,0 +1,238 @@
+AWSTemplateFormatVersion: '2010-09-09'
+
+Description:
+  NGINX SERVER TEMPLATE
+  This will deploy a reverse proxy server to use with code deploy
+
+Parameters:
+  #  Will retrieve the latest linux AMI
+  LatestAmiId:
+    Type: 'AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>'
+    Default: '/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2'
+
+  KeyName:
+    Description: The name of your ssh key pem file to ssh to your instance
+    Type: String
+    Default: 'wordpress'
+    MinLength: 1
+  SiteName:
+    Description: name of the site
+    Type: String
+    Default: "stackfails.io www.stackfails.io"
+
+
+Resources:
+  Webserver:
+    Type: AWS::EC2::Instance
+    Metadata:
+      Comment: Basic Nginx Server Setup
+      AWS::CloudFormation::Init:
+        config:
+          packages:
+            yum:
+              ruby: [ ]
+              wget: [ ]
+          files:
+            # Configure the reverse proxy for the site domain
+            /etc/nginx/conf.d/dev.conf:
+              content: !Sub |
+                server {
+                  client_max_body_size 64M;
+                  listen 80;
+                  server_name  ${SiteName};
+                     location / {
+                        proxy_pass             http://127.0.0.1:3000;
+                        proxy_read_timeout     60;
+                        proxy_connect_timeout  60;
+                        proxy_redirect         off;
+                       }
+                    }
+            /etc/cfn/cfn-hup.conf:
+              content:
+                !Sub |
+                [main]
+                stack=${AWS::StackId}
+                region=${AWS::Region}
+                mode: '000400'
+                owner: 'root'
+                group: 'root'
+            /etc/cfn/hooks.d/cfn-auto-reloader.conf:
+              content: !Sub |
+                [cfn-auto-reloader-hook]
+                triggers=post.update
+                path=Resources.WebServerHost.Metadata.AWS::CloudFormation::Init
+                action=/opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource WebServerHost --region ${AWS::Region}
+              mode: '000400'
+              owner: 'root'
+              group: 'root'
+
+          commands:
+            # Install node 16
+            00-install-node:
+              command: !Sub |
+                curl --silent --location https://rpm.nodesource.com/setup_16.x | bash -
+                yum -y install nodejs
+            # Add your ssh key from AWS SSM to your instance
+            01-install-cd:
+              command: !Sub |
+                wget https://aws-codedeploy-${AWS::Region}.s3.amazonaws.com/latest/install
+                chmod +x ./install
+                ./install auto
+            02-add-app-env:
+              command: !Sub |
+                cd /home/ec2-user/server
+                touch .env
+                echo "{{resolve:ssm:stack-fail-env}}" >> /home/ec2-user/server/.env
+            03-install-nginx:
+              command: sudo amazon-linux-extras install nginx1 -y
+            04-run-nginx:
+              command: sudo service nginx start
+            05-restart-cd:
+              command: sudo service codedeploy-agent restart
+
+          Services:
+            sysvinit:
+              codedeploy-agent:
+                enabled: true
+                ensureRunning: true
+
+              nginx:
+                enabled: true
+                ensureRunning: true
+                files:
+                  - /etc/nginx/conf.d/stackfails.conf
+              cfn-hup:
+                enable: 'true'
+                ensureRunning: 'true'
+                files:
+                  - '/etc/cfn/cfn-hup.conf'
+
+    Properties:
+      IamInstanceProfile:
+        !Ref InstanceProfile
+      # Always use the latest Linux AMI
+      ImageId: !Ref LatestAmiId
+      AvailabilityZone: us-east-1a
+      InstanceType: t2.small
+      KeyName: !Ref KeyName
+      SecurityGroups:
+        - !Ref SSHSecurityGroup
+        - !Ref ServerSecurityGroup
+      Tags:
+        - Key: "Name"
+          Value: !Sub "cd-${AWS::StackName}-webserver"
+      UserData:
+        Fn::Base64:
+          !Sub |
+          #!/bin/bash -xe
+            # Get the latest CloudFormation helper scripts
+            yum install -y aws-cfn-bootstrap
+          
+            # Start cfn-init
+            /opt/aws/bin/cfn-init -v --stack ${AWS::StackName} --resource Webserver --region ${AWS::Region}
+          
+            # cfn-init completed so signal success or not
+            /opt/aws/bin/cfn-signal -e $? --stack ${AWS::StackName} --resource Webserver --region ${AWS::Region}
+  
+
+  InstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Action: 'sts:AssumeRole'
+            Principal:
+              Service: ec2.amazonaws.com
+            Effect: Allow
+            Sid: ''
+      Policies:
+        - PolicyName: codeDeployEc2
+          PolicyDocument:
+            Version: 2012-10-17
+            Statement:
+              - Action:
+                  - 's3:GetObject'
+                  - 's3:GetObjectVersion'
+                  - 's3:ListBucket'
+                  - 's3:DeleteObject'
+                  - 'ssm:DescribeAssociation'
+                  - 'ssm:GetDeployablePatchSnapshotForInstance'
+                  - 'ssm:GetDocument'
+                  - 'ssm:DescribeDocument'
+                  - 'ssm:GetManifest'
+                  - 'ssm:GetParameter'
+                  - 'ssm:GetParameters'
+                  - 'ssm:ListAssociations'
+                  - 'ssm:ListInstanceAssociations'
+                  - 'ssm:PutInventory'
+                  - 'ssm:PutComplianceItems'
+                  - 'ssm:PutConfigurePackageResult'
+                  - 'ssm:UpdateAssociationStatus'
+                  - 'ssm:UpdateInstanceAssociationStatus'
+                  - 'ssm:UpdateInstanceInformation'
+                  - 'ssmmessages:CreateControlChannel'
+                  - 'ssmmessages:CreateDataChannel'
+                  - 'ssmmessages:OpenControlChannel'
+                  - 'ssmmessages:OpenDataChannel'
+                  - 'ec2messages:AcknowledgeMessage'
+                  - 'ec2messages:DeleteMessage'
+                  - 'ec2messages:FailMessage'
+                  - 'ec2messages:GetEndpoint'
+                  - 'ec2messages:GetMessages'
+                  - 'ec2messages:SendReply'
+                Resource: '*'
+                Effect: Allow
+
+  InstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Path: /
+      Roles:
+        - !Ref InstanceRole
+
+  SSHSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Enable SSH access via port 22 you should limit the ip address
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: "Name"
+          Value: !Sub "cd-${AWS::StackName}-SSHSecurityGroup"
+  ServerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow HTTP and HTTPS connections from specified CIDR ranges
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: "Name"
+          Value: !Sub "cd-${AWS::StackName}-ServerSecurityGroup"
+
+Outputs:
+  InstanceId:
+    Description: The ID of the instance
+    Value: !Ref Webserver
+  PublicIP:
+    Description: The public IP of the instance
+    Value: !GetAtt Webserver.PublicIp
+  PublicDNS:
+    Description: The public DNS name of the instance
+    Value: !GetAtt Webserver.PublicDnsName
+  SecurityGroup:
+    Description: The security group of the instance
+    Value: !Ref ServerSecurityGroup
+  SSHSecurityGroup:
+    Description: The security group of the instance
+    Value: !Ref SSHSecurityGroup
+
