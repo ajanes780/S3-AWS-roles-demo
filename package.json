@@ -1,0 +1,26 @@
+{
+  "name": "aws-roles-s3",
+  "version": "1.0.0",
+  "description": "demo app to fetch a file from S3",
+  "main": "fetch.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ajanes780/S3-AWS-roles-demo.git"
+  },
+  "author": "Aaron Janes - stackfails.io",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/ajanes780/S3-AWS-roles-demo/issues"
+  },
+  "homepage": "https://github.com/ajanes780/S3-AWS-roles-demo#readme",
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.279.0",
+    "@aws-sdk/s3-request-presigner": "^3.279.0",
+    "aws-sdk": "^2.1323.0",
+    "node-fetch": "^3.3.0"
+  }
+}

@@ -1,8 +1,8 @@
 AWSTemplateFormatVersion: '2010-09-09'
 
 Description:
-  NGINX SERVER TEMPLATE
-  This will deploy a reverse proxy server to use with code deploy
+  Creates an Ec2 Instance with nodejs and preloaded with the course program files
+  The goal is to demonstrate how to create a role in could formation and use it to perform actions on S3
 
 Parameters:
   #  Will retrieve the latest linux AMI
@@ -15,38 +15,25 @@ Parameters:
     Type: String
     Default: 'wordpress'
     MinLength: 1
-  SiteName:
-    Description: name of the site
-    Type: String
-    Default: "stackfails.io www.stackfails.io"
 
 
 Resources:
   Webserver:
     Type: AWS::EC2::Instance
     Metadata:
-      Comment: Basic Nginx Server Setup
+      Comment: S3 Roles Demo Nodejs
       AWS::CloudFormation::Init:
         config:
           packages:
             yum:
               ruby: [ ]
               wget: [ ]
+
+          # Download the course files from S3
+          sources:
+            /home/ec2-user/course : "https://iam-roles-demo-s3-ec2-stackfails.s3.amazonaws.com/coursefiles.zip"
+
           files:
-            # Configure the reverse proxy for the site domain
-            /etc/nginx/conf.d/dev.conf:
-              content: !Sub |
-                server {
-                  client_max_body_size 64M;
-                  listen 80;
-                  server_name  ${SiteName};
-                     location / {
-                        proxy_pass             http://127.0.0.1:3000;
-                        proxy_read_timeout     60;
-                        proxy_connect_timeout  60;
-                        proxy_redirect         off;
-                       }
-                    }
             /etc/cfn/cfn-hup.conf:
               content:
                 !Sub |
@@ -72,35 +59,9 @@ Resources:
               command: !Sub |
                 curl --silent --location https://rpm.nodesource.com/setup_16.x | bash -
                 yum -y install nodejs
-            # Add your ssh key from AWS SSM to your instance
-            01-install-cd:
-              command: !Sub |
-                wget https://aws-codedeploy-${AWS::Region}.s3.amazonaws.com/latest/install
-                chmod +x ./install
-                ./install auto
-            02-add-app-env:
-              command: !Sub |
-                cd /home/ec2-user/server
-                touch .env
-                echo "{{resolve:ssm:stack-fail-env}}" >> /home/ec2-user/server/.env
-            03-install-nginx:
-              command: sudo amazon-linux-extras install nginx1 -y
-            04-run-nginx:
-              command: sudo service nginx start
-            05-restart-cd:
-              command: sudo service codedeploy-agent restart
 
           Services:
             sysvinit:
-              codedeploy-agent:
-                enabled: true
-                ensureRunning: true
-
-              nginx:
-                enabled: true
-                ensureRunning: true
-                files:
-                  - /etc/nginx/conf.d/stackfails.conf
               cfn-hup:
                 enable: 'true'
                 ensureRunning: 'true'
@@ -113,14 +74,14 @@ Resources:
       # Always use the latest Linux AMI
       ImageId: !Ref LatestAmiId
       AvailabilityZone: us-east-1a
-      InstanceType: t2.small
+      InstanceType: t2.micro
       KeyName: !Ref KeyName
       SecurityGroups:
         - !Ref SSHSecurityGroup
         - !Ref ServerSecurityGroup
       Tags:
         - Key: "Name"
-          Value: !Sub "cd-${AWS::StackName}-webserver"
+          Value: !Sub "stackfails-${AWS::StackName}-demo"
       UserData:
         Fn::Base64:
           !Sub |
@@ -146,40 +107,12 @@ Resources:
             Effect: Allow
             Sid: ''
       Policies:
-        - PolicyName: codeDeployEc2
+        - PolicyName: S3-nodeserver-demo
           PolicyDocument:
             Version: 2012-10-17
             Statement:
               - Action:
-                  - 's3:GetObject'
-                  - 's3:GetObjectVersion'
-                  - 's3:ListBucket'
-                  - 's3:DeleteObject'
-                  - 'ssm:DescribeAssociation'
-                  - 'ssm:GetDeployablePatchSnapshotForInstance'
-                  - 'ssm:GetDocument'
-                  - 'ssm:DescribeDocument'
-                  - 'ssm:GetManifest'
-                  - 'ssm:GetParameter'
-                  - 'ssm:GetParameters'
-                  - 'ssm:ListAssociations'
-                  - 'ssm:ListInstanceAssociations'
-                  - 'ssm:PutInventory'
-                  - 'ssm:PutComplianceItems'
-                  - 'ssm:PutConfigurePackageResult'
-                  - 'ssm:UpdateAssociationStatus'
-                  - 'ssm:UpdateInstanceAssociationStatus'
-                  - 'ssm:UpdateInstanceInformation'
-                  - 'ssmmessages:CreateControlChannel'
-                  - 'ssmmessages:CreateDataChannel'
-                  - 'ssmmessages:OpenControlChannel'
-                  - 'ssmmessages:OpenDataChannel'
-                  - 'ec2messages:AcknowledgeMessage'
-                  - 'ec2messages:DeleteMessage'
-                  - 'ec2messages:FailMessage'
-                  - 'ec2messages:GetEndpoint'
-                  - 'ec2messages:GetMessages'
-                  - 'ec2messages:SendReply'
+                  - 's3:*'
                 Resource: '*'
                 Effect: Allow
 
@@ -201,7 +134,7 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: "Name"
-          Value: !Sub "cd-${AWS::StackName}-SSHSecurityGroup"
+          Value: !Sub "stackfails-${AWS::StackName}-SSHSecurityGroup"
   ServerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -217,22 +150,4 @@ Resources:
           CidrIp: 0.0.0.0/0
       Tags:
         - Key: "Name"
-          Value: !Sub "cd-${AWS::StackName}-ServerSecurityGroup"
-
-Outputs:
-  InstanceId:
-    Description: The ID of the instance
-    Value: !Ref Webserver
-  PublicIP:
-    Description: The public IP of the instance
-    Value: !GetAtt Webserver.PublicIp
-  PublicDNS:
-    Description: The public DNS name of the instance
-    Value: !GetAtt Webserver.PublicDnsName
-  SecurityGroup:
-    Description: The security group of the instance
-    Value: !Ref ServerSecurityGroup
-  SSHSecurityGroup:
-    Description: The security group of the instance
-    Value: !Ref SSHSecurityGroup
-
+          Value: !Sub "stackfails-${AWS::StackName}-ServerSecurityGroup"
